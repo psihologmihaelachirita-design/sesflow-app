@@ -62,14 +62,81 @@ export default function ClientPage() {
     email: '',
     pesel: '',
     address: '',
+    dataNasterii: '',
+    cetatenie: '',
+    numarAct: '',
+    valabilitateAct: '',
   });
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [extractMessage, setExtractMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
+  const [dataConfirmed, setDataConfirmed] = useState(false);
+  const [hasExtractedData, setHasExtractedData] = useState(false);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setExtractMessage(null);
+    setDataConfirmed(false);
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const response = await fetch('/api/extract-id', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setExtractMessage({ type: 'error', text: 'Nu s-au putut extrage datele. Încearcă din nou sau completează manual.' });
+      } else {
+        const numeComplet = `${data.prenume || ''} ${data.nume || ''}`.trim();
+
+        setClientData((prev) => ({
+          ...prev,
+          name: numeComplet || prev.name,
+          pesel: data.PESEL || prev.pesel,
+          dataNasterii: data.data_nasterii || prev.dataNasterii,
+          cetatenie: data.cetatenie || prev.cetatenie,
+          numarAct: data.numar_act || prev.numarAct,
+          valabilitateAct: data.valabilitate_act || prev.valabilitateAct,
+        }));
+        setHasExtractedData(true);
+
+        const lipsesc: string[] = [];
+        if (!numeComplet) lipsesc.push('nume');
+        if (!data.PESEL) lipsesc.push('PESEL');
+
+        if (lipsesc.length === 0) {
+          setExtractMessage({ type: 'success', text: '✅ Datele au fost extrase automat. Verifică-le mai jos și confirmă.' });
+        } else {
+          setExtractMessage({
+            type: 'warning',
+            text: `⚠️ Am extras parțial datele. Nu am putut citi: ${lipsesc.join(', ')}. Completează manual câmpurile lipsă, apoi confirmă.`,
+          });
+        }
+      }
+    } catch (error) {
+      setExtractMessage({ type: 'error', text: 'A apărut o eroare. Încearcă din nou.' });
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (hasExtractedData && !dataConfirmed) {
+      setError('Te rog confirmă că datele extrase sunt corecte înainte de a continua.');
+      return;
+    }
 
     if (clientData.pesel) {
       const validation = validatePesel(clientData.pesel);
@@ -88,6 +155,10 @@ export default function ClientPage() {
         email: clientData.email,
         pesel: clientData.pesel,
         address: clientData.address,
+        data_nasterii: clientData.dataNasterii,
+        cetatenie: clientData.cetatenie,
+        numar_act: clientData.numarAct,
+        valabilitate_act: clientData.valabilitateAct,
         link_token: id,
         psychologist_id: null,
       });
@@ -124,6 +195,35 @@ export default function ClientPage() {
 
         {step === 1 && (
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Upload buletin */}
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+              <p className="text-sm text-gray-600 mb-2">
+                📸 Încarcă poza cu buletinul pentru a extrage automat datele
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                disabled={uploading}
+                className="block mx-auto text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+              {uploading && <p className="text-sm text-gray-500 mt-2">Se procesează imaginea...</p>}
+
+              {extractMessage && (
+                <div
+                  className={`mt-3 p-3 rounded-lg text-sm text-left ${
+                    extractMessage.type === 'success'
+                      ? 'bg-green-100 text-green-700'
+                      : extractMessage.type === 'warning'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-red-100 text-red-700'
+                  }`}
+                >
+                  {extractMessage.text}
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Nume complet
@@ -167,6 +267,58 @@ export default function ClientPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                Data nașterii
+              </label>
+              <input
+                type="text"
+                value={clientData.dataNasterii}
+                onChange={(e) => setClientData({ ...clientData, dataNasterii: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                placeholder="04.02.1983"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Cetățenie
+              </label>
+              <input
+                type="text"
+                value={clientData.cetatenie}
+                onChange={(e) => setClientData({ ...clientData, cetatenie: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                placeholder="Polskie"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Număr act de identitate
+              </label>
+              <input
+                type="text"
+                value={clientData.numarAct}
+                onChange={(e) => setClientData({ ...clientData, numarAct: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                placeholder="ARG 691869"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Valabilitate act
+              </label>
+              <input
+                type="text"
+                value={clientData.valabilitateAct}
+                onChange={(e) => setClientData({ ...clientData, valabilitateAct: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                placeholder="19.05.2029"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Adresă
               </label>
               <input
@@ -178,6 +330,20 @@ export default function ClientPage() {
                 required
               />
             </div>
+
+            {hasExtractedData && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dataConfirmed}
+                    onChange={(e) => setDataConfirmed(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>Confirm că datele de mai sus (extrase din buletin) sunt corecte.</span>
+                </label>
+              </div>
+            )}
 
             <button
               type="submit"
