@@ -1,13 +1,22 @@
-@layer base {
-  :root {
-    --color-beige-50: #fdf8f3;
-    --color-beige-100: #f5ede4;
-    --color-beige-200: #e8dccc;
-    --color-beige-300: #d4c4b0;
-  }
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
-.bg-beige-50 { background-color: var(--color-beige-50); }
-.bg-beige-100 { background-color: var(--color-beige-100); }
-.bg-beige-200 { background-color: var(--color-beige-200); }
-.bg-beige-300 { background-color: var(--color-beige-300); }
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Carduri și efecte premium */
+.card-hover {
+  transition: all 0.2s ease-in-out;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+}
