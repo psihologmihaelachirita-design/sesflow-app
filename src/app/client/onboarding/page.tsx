@@ -70,7 +70,7 @@ function OnboardingContent() {
         return;
       }
 
-      setClientData(data.extractedData || data);
+      setClientData(data.extractedData || data.client || data);
       setClientId(data.client?.id || 'temp-' + Date.now());
       setStep('confirm_and_sign');
     } catch (err) {
