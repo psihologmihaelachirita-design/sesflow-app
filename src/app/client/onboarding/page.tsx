@@ -70,8 +70,8 @@ function OnboardingContent() {
         return;
       }
 
-      setClientData(data.extractedData);
-      setClientId(data.client.id);
+      setClientData(data.extractedData || data);
+      setClientId(data.client?.id || 'temp-' + Date.now());
       setStep('confirm_and_sign');
     } catch (err) {
       console.error(err);
