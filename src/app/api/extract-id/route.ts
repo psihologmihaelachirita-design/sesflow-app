@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    console.log('=== START EXTRACT CLAUDE VISION (RO & PL) ===');
+    console.log('=== START EXTRACT CLAUDE VISION ===');
 
     const formData = await request.formData();
     const image = formData.get('image') as File;
@@ -10,8 +10,6 @@ export async function POST(request: Request) {
     if (!image) {
       return NextResponse.json({ error: 'Nu s-a găsit nicio imagine' }, { status: 400 });
     }
-
-    console.log('Imagine primită:', image.name, image.type, image.size);
 
     const imageBuffer = await image.arrayBuffer();
     const base64Image = Buffer.from(imageBuffer).toString('base64');
@@ -21,53 +19,42 @@ export async function POST(request: Request) {
       mediaType = 'image/jpeg';
     }
 
-    let extractedData = {
-      last_name: '',
-      first_name: '',
-      national_id: '',
-      id_card_series: '',
-      address: '',
-      country_code: 'RO'
-    };
-
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-3-5-sonnet-latest',
-          max_tokens: 1000,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: mediaType,
-                    data: base64Image,
-                  },
+    // Folosim varianta stabilă de Claude Sonnet 3.5
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20240620',
+        max_tokens: 1000,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType,
+                  data: base64Image,
                 },
-                {
-                  type: 'text',
-                  text: `Analizează această imagine care conține un act de identitate (buletin).
+              },
+              {
+                type: 'text',
+                text: `Analizează această imagine care conține un act de identitate (buletin RO sau PL).
 
-Detectează automat dacă este un act de identitate din ROMÂNIA (C.I. / Carte de Identitate) sau POLONIA (Dowód Osobisty).
+Extrage:
+1. last_name (Nume de familie)
+2. first_name (Prenume)
+3. national_id (CNP pentru RO / PESEL pentru PL)
+4. id_card_series (Seria și Numărul actului)
+5. address (Adresa de domiciliu)
+6. country_code ("RO" sau "PL")
 
-Extrage cu atenție următoarele informații:
-1. nume (Nume de familie / NAZWISKO)
-2. prenume (Prenume / IMIĘ)
-3. national_id: Codul Numeric Personal (CNP - 13 cifre pentru România) SAU PESEL (11 cifre pentru Polonia). Verifică și zona MRZ de jos dacă este cazul.
-4. id_card_series: Seria și Numărul actului (ex: "RK 123456" pentru RO sau Seria/Nr cardului pentru PL).
-5. adresa: Adresa completă de domiciliu (Domiciliu pentru RO; dacă lipsește la PL, lasă string gol).
-6. country_code: "RO" dacă este buletin românesc, sau "PL" dacă este polonez.
-
-Răspunde STRICT cu un obiect JSON valid, fără markdown, fără explicații suplimentare. Format exact:
+Răspunde STRICT cu JSON valid:
 {
   "last_name": "...",
   "first_name": "...",
@@ -75,37 +62,33 @@ Răspunde STRICT cu un obiect JSON valid, fără markdown, fără explicații su
   "id_card_series": "...",
   "address": "...",
   "country_code": "RO"
-}
+}`,
+              },
+            ],
+          },
+        ],
+      }),
+    });
 
-Dacă un câmp nu este lizibil sau nu există, pune string gol "". Nu inventa date.`,
-                },
-              ],
-            },
-          ],
-        }),
-      });
+    const data = await response.json();
 
-      const data = await response.json();
-
-      if (response.ok && data.content?.[0]?.text) {
-        const rawText = data.content[0].text;
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        const cleaned = jsonMatch ? jsonMatch[0] : rawText.replace(/```json|```/g, '').trim();
-        extractedData = JSON.parse(cleaned);
-      } else {
-        console.warn('Claude API nu a returnat date (se trece la introducere manuala):', data);
-      }
-    } catch (aiError) {
-      console.error('Eroare conexiune Claude (se activeaza modul manual):', aiError);
+    if (!response.ok) {
+      console.error('Eroare Anthropic:', data);
+      return NextResponse.json({ error: 'Eroare la procesarea buletinului cu AI.' }, { status: 500 });
     }
 
-    console.log('Date structurate returnate către frontend:', extractedData);
-    return NextResponse.json(extractedData);
+    const rawText = data.content?.[0]?.text || '';
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const extractedData = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+    // Trimitem înapoi formatul pe care îl așteaptă exact pagina ta (cu .extractedData și .client)
+    return NextResponse.json({
+      extractedData: extractedData,
+      client: { id: 'temp-' + Date.now() }
+    });
+
   } catch (error: any) {
     console.error('EROARE SERVER:', error);
-    return NextResponse.json(
-      { error: 'Eroare server: ' + (error.message || 'unknown') },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Eroare la procesare.' }, { status: 500 });
   }
 }
