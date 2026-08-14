@@ -2,93 +2,92 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    console.log('=== START EXTRACT CLAUDE VISION ===');
+    console.log('=== START EXTRACT ID ===');
 
     const formData = await request.formData();
     const image = formData.get('image') as File;
 
-    if (!image) {
-      return NextResponse.json({ error: 'Nu s-a găsit nicio imagine' }, { status: 400 });
-    }
+    let extractedData = {
+      last_name: '',
+      first_name: '',
+      national_id: '',
+      id_card_series: '',
+      address: '',
+      country_code: 'RO'
+    };
 
-    const imageBuffer = await image.arrayBuffer();
-    const base64Image = Buffer.from(imageBuffer).toString('base64');
+    if (image) {
+      try {
+        const imageBuffer = await image.arrayBuffer();
+        const base64Image = Buffer.from(imageBuffer).toString('base64');
 
-    let mediaType = image.type;
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mediaType)) {
-      mediaType = 'image/jpeg';
-    }
+        let mediaType = image.type;
+        if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mediaType)) {
+          mediaType = 'image/jpeg';
+        }
 
-    // Folosim varianta stabilă de Claude Sonnet 3.5
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
-        max_tokens: 1000,
-        messages: [
-          {
-            role: 'user',
-            content: [
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY!,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 1000,
+            messages: [
               {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: base64Image,
-                },
-              },
-              {
-                type: 'text',
-                text: `Analizează această imagine care conține un act de identitate (buletin RO sau PL).
-
-Extrage:
-1. last_name (Nume de familie)
-2. first_name (Prenume)
-3. national_id (CNP pentru RO / PESEL pentru PL)
-4. id_card_series (Seria și Numărul actului)
-5. address (Adresa de domiciliu)
-6. country_code ("RO" sau "PL")
-
-Răspunde STRICT cu JSON valid:
-{
-  "last_name": "...",
-  "first_name": "...",
-  "national_id": "...",
-  "id_card_series": "...",
-  "address": "...",
-  "country_code": "RO"
-}`,
+                role: 'user',
+                content: [
+                  {
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: mediaType,
+                      data: base64Image,
+                    },
+                  },
+                  {
+                    type: 'text',
+                    text: `Extrage din buletin: last_name, first_name, national_id, id_card_series, address, country_code. Răspunde doar JSON valid.`,
+                  },
+                ],
               },
             ],
-          },
-        ],
-      }),
-    });
+          }),
+        });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Eroare Anthropic:', data);
-      return NextResponse.json({ error: 'Eroare la procesarea buletinului cu AI.' }, { status: 500 });
+        const data = await response.json();
+        if (response.ok && data.content?.[0]?.text) {
+          const rawText = data.content[0].text;
+          const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            extractedData = JSON.parse(jsonMatch[0]);
+          }
+        }
+      } catch (err) {
+        console.log('Eroare AI, se continuă pe modul manual.');
+      }
     }
 
-    const rawText = data.content?.[0]?.text || '';
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    const extractedData = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
-
-    // Trimitem înapoi formatul pe care îl așteaptă exact pagina ta (cu .extractedData și .client)
+    // Întotdeauna răspundem cu OK 200 ca să lăsăm utilizatorul să meargă mai departe
     return NextResponse.json({
       extractedData: extractedData,
       client: { id: 'temp-' + Date.now() }
     });
 
   } catch (error: any) {
-    console.error('EROARE SERVER:', error);
-    return NextResponse.json({ error: 'Eroare la procesare.' }, { status: 500 });
+    return NextResponse.json({
+      extractedData: {
+        last_name: '',
+        first_name: '',
+        national_id: '',
+        id_card_series: '',
+        address: '',
+        country_code: 'RO'
+      },
+      client: { id: 'temp-' + Date.now() }
+    });
   }
 }
