@@ -21,31 +21,41 @@ export async function POST(request: Request) {
       mediaType = 'image/jpeg';
     }
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: base64Image,
+    let extractedData = {
+      last_name: '',
+      first_name: '',
+      national_id: '',
+      id_card_series: '',
+      address: '',
+      country_code: 'RO'
+    };
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY!,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-sonnet-latest',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: base64Image,
+                  },
                 },
-              },
-              {
-                type: 'text',
-                text: `Analizează această imagine care conține un act de identitate (buletin).
+                {
+                  type: 'text',
+                  text: `Analizează această imagine care conține un act de identitate (buletin).
 
 Detectează automat dacă este un act de identitate din ROMÂNIA (C.I. / Carte de Identitate) sau POLONIA (Dowód Osobisty).
 
@@ -68,41 +78,28 @@ Răspunde STRICT cu un obiect JSON valid, fără markdown, fără explicații su
 }
 
 Dacă un câmp nu este lizibil sau nu există, pune string gol "". Nu inventa date.`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
+                },
+              ],
+            },
+          ],
+        }),
+      });
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!response.ok) {
-      console.error('Claude API error:', data);
-      return NextResponse.json(
-        { error: data.error?.message || 'Eroare la apelul Claude API' },
-        { status: response.status }
-      );
+      if (response.ok && data.content?.[0]?.text) {
+        const rawText = data.content[0].text;
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        const cleaned = jsonMatch ? jsonMatch[0] : rawText.replace(/```json|```/g, '').trim();
+        extractedData = JSON.parse(cleaned);
+      } else {
+        console.warn('Claude API nu a returnat date (se trece la introducere manuala):', data);
+      }
+    } catch (aiError) {
+      console.error('Eroare conexiune Claude (se activeaza modul manual):', aiError);
     }
 
-    const rawText = data.content?.[0]?.text || '';
-    console.log('Răspuns brut Claude:', rawText);
-
-    let extractedData;
-    try {
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      const cleaned = jsonMatch ? jsonMatch[0] : rawText.replace(/```json|```/g, '').trim();
-      extractedData = JSON.parse(cleaned);
-    } catch (parseError) {
-      console.error('Eroare parsare JSON:', parseError, 'Raw text:', rawText);
-      return NextResponse.json(
-        { error: 'Nu am putut interpreta răspunsul. Încearcă din nou cu o poză mai clară.' },
-        { status: 500 }
-      );
-    }
-
-    console.log('Date extrase și structurate:', extractedData);
-    // Returnăm direct obiectul extras EXACT așa cum așteaptă frontend-ul tău inițial
+    console.log('Date structurate returnate către frontend:', extractedData);
     return NextResponse.json(extractedData);
   } catch (error: any) {
     console.error('EROARE SERVER:', error);
