@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Inițializare client Supabase Backend
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -9,7 +8,7 @@ const supabase = createClient(
 
 export async function POST(request: Request) {
   try {
-    console.log('=== START EXTRACT & SAVE TO SUPABASE ===');
+    console.log('=== START EXTRACT & SAVE ===');
 
     const formData = await request.formData();
     const image = formData.get('image') as File;
@@ -27,118 +26,98 @@ export async function POST(request: Request) {
       mediaType = 'image/jpeg';
     }
 
-    // 1. Extragere prin AI (Claude Vision)
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: base64Image,
+    let extractedData = {
+      first_name: '',
+      last_name: '',
+      national_id: '',
+      id_card_series: '',
+      address: '',
+      country_code: 'PL'
+    };
+
+    // Încercăm apelul AI
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY!,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: mediaType,
+                    data: base64Image,
+                  },
                 },
-              },
-              {
-                type: 'text',
-                text: `Analizează această imagine care conține un act de identitate.
-Detectează dacă este din ROMÂNIA (C.I.) sau POLONIA (Dowód Osobisty).
+                {
+                  type: 'text',
+                  text: 'Extrage datele din actul de identitate (first_name, last_name, national_id, id_card_series, address, country_code). Răspunde doar JSON.',
+                },
+              ],
+            },
+          ],
+        }),
+      });
 
-Extrage:
-1. last_name (Nume de familie / NAZWISKO)
-2. first_name (Prenume / IMIĘ)
-3. national_id (CNP pentru RO - 13 cifre / PESEL pentru PL - 11 cifre)
-4. id_card_series (Seria și Nr actului)
-5. address (Adresa de domiciliu)
-6. country_code ("RO" sau "PL")
-
-Răspunde STRICT cu un obiect JSON valid, fără alt text în jur:
-{
-  "last_name": "...",
-  "first_name": "...",
-  "national_id": "...",
-  "id_card_series": "...",
-  "address": "...",
-  "country_code": "RO"
-}`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      console.error('Eroare Claude API:', data);
-      return NextResponse.json({ error: data.error?.message || 'Eroare Claude API' }, { status: 500 });
+      const data = await response.json();
+      if (response.ok && data.content?.[0]?.text) {
+        const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          extractedData = JSON.parse(jsonMatch[0]);
+        }
+      }
+    } catch (aiErr) {
+      console.log('Eroare la AI scan, continuam cu formularul:', aiErr);
     }
 
-    const rawText = data.content?.[0]?.text || '';
-    // Curățare sigură JSON
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('AI-ul nu a returnat un format JSON valid.');
-    }
-    const extractedData = JSON.parse(jsonMatch[0]);
-
-    // Validare simplă UUID pentru psychologist_id (dacă e de test gen "123", punem null ca să nu crape DB)
+    // Salvare în Supabase
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(psychologistId);
     const validPsychologistId = isUuid ? psychologistId : null;
 
-    // 2. Salvare în Supabase
-    let newClient = null;
+    let finalClient = {
+      id: 'temp-' + Date.now(),
+      ...extractedData
+    };
+
     try {
-      const { data: clientInserted, error: dbError } = await supabase
+      const { data: clientInserted } = await supabase
         .from('clients')
         .insert([
           {
             psychologist_id: validPsychologistId,
-            first_name: extractedData.first_name || 'Incomplet',
-            last_name: extractedData.last_name || 'Incomplet',
-            national_id: extractedData.national_id || 'N/A',
-            id_card_series: extractedData.id_card_series || 'N/A',
-            address: extractedData.address || '-',
+            first_name: extractedData.first_name || 'Completat manual',
+            last_name: extractedData.last_name || 'Completat manual',
+            national_id: extractedData.national_id || '',
+            id_card_series: extractedData.id_card_series || '',
+            address: extractedData.address || '',
             id_scanned_at: new Date().toISOString(),
           },
         ])
         .select()
         .single();
 
-      if (dbError) {
-        console.error('Atentie la salvare Supabase (continuam testul):', dbError.message);
-      } else {
-        newClient = clientInserted;
+      if (clientInserted) {
+        finalClient = clientInserted;
       }
     } catch (dbErr) {
-      console.error('Eroare conexiune Supabase:', dbErr);
+      console.log('Eroare salvare DB:', dbErr);
     }
-
-    // Dacă Supabase a eșuat sau ești în test, creăm un ID temporar pentru ca fluxul să meargă mai departe
-    const finalClient = newClient || {
-      id: 'temp-' + Date.now(),
-      ...extractedData
-    };
-
-    console.log('Procesare reușită pentru:', extractedData.first_name, extractedData.last_name);
 
     return NextResponse.json({
       client: finalClient,
       extractedData,
     });
   } catch (error: any) {
-    console.error('EROARE SERVER:', error);
-    return NextResponse.json({ error: error.message || 'Eroare necunoscută la procesare' }, { status: 500 });
+    return NextResponse.json({ error: 'Eroare procesare' }, { status: 500 });
   }
 }
