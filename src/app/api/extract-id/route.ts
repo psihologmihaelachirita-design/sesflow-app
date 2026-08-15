@@ -21,21 +21,15 @@ export async function POST(request: Request) {
       mediaType = 'image/jpeg';
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      console.error('Lipsește ANTHROPIC_API_KEY din mediul de lucru!');
-      return NextResponse.json({ error: 'Cheia API Anthropic nu este configurată în .env.local' }, { status: 500 });
-    }
-
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
+        'x-api-key': process.env.ANTHROPIC_API_KEY!,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         messages: [
           {
@@ -55,25 +49,42 @@ export async function POST(request: Request) {
 
 Detectează automat dacă este un act de identitate din ROMÂNIA (C.I. / Carte de Identitate) sau POLONIA (Dowód Osobisty).
 
-Extrage cu atenție următoarele informații:
-1. nume (Nume de familie / NAZWISKO)
-2. prenume (Prenume / IMIĘ)
-3. national_id: Codul Numeric Personal (CNP - 13 cifre pentru România) SAU PESEL (11 cifre pentru Polonia). Verifică și zona MRZ de jos dacă este cazul.
-4. id_card_series: Seria și Numărul actului (ex: "RK 123456" pentru RO sau Seria/Nr cardului pentru PL).
-5. adresa: Adresa completă de domiciliu (Domiciliu pentru RO; dacă lipsește la PL, lasă string gol).
-6. country_code: "RO" dacă este buletin românesc, sau "PL" dacă este polonez.
+EXTRAGE URMĂTOARELE:
 
-Răspunde STRICT cu un obiect JSON valid, fără markdown, fără explicații suplimentare. Format exact:
+1. last_name (Nume de familie)
+   - RO: caută "Nume" pe C.I.
+   - PL: caută "NAZWISKO"
+
+2. first_name (Prenume)
+   - RO: caută "Prenume"
+   - PL: caută "IMIĘ"
+
+3. national_id (CNP sau PESEL)
+   - RO: CNP-ul are 13 CIFRE. Pe buletinul românesc, este în zona MRZ (Machine Readable Zone) de jos sau sub serie/nr.
+   - PL: PESEL-ul are 11 CIFRE. Pe buletinul polonez, este pe față și în MRZ.
+   - Verifică ZONA MRZ (de jos) pentru a găsi numărul corect.
+
+4. id_card_series (Seria și Numărul actului)
+   - RO: caută "Seria" și "Nr." (ex: "RK 123456")
+   - PL: caută seria cardului
+
+5. country_code: "RO" sau "PL"
+
+ATENȚIE:
+- CNP = 13 CIFRE (ex: 1980312345678)
+- PESEL = 11 CIFRE (ex: 72033012347)
+- NU extrage adresa! ADRESA SE COMPLETEAZĂ MANUAL.
+
+Răspunde STRICT cu JSON valid, fără markdown. Format:
 {
   "last_name": "...",
   "first_name": "...",
   "national_id": "...",
   "id_card_series": "...",
-  "address": "...",
   "country_code": "RO"
 }
 
-Dacă un câmp nu este lizibil sau nu există, pune string gol "". Nu inventa date.`,
+Dacă nu găsești un câmp, pune string gol "".`,
               },
             ],
           },
@@ -84,26 +95,35 @@ Dacă un câmp nu este lizibil sau nu există, pune string gol "". Nu inventa da
     const data = await response.json();
 
     if (!response.ok) {
-      console.error('Eroare Anthropic API:', data);
-      return NextResponse.json({ error: 'Eroare Claude API: ' + (data.error?.message || 'Eroare necunoscută') }, { status: 500 });
+      console.error('Claude API error:', data);
+      return NextResponse.json(
+        { error: data.error?.message || 'Eroare la apelul Claude API' },
+        { status: response.status }
+      );
     }
 
     const rawText = data.content?.[0]?.text || '';
     console.log('Răspuns brut Claude:', rawText);
 
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    const cleaned = jsonMatch ? jsonMatch[0] : rawText.replace(/```json|```/g, '').trim();
-    const extractedData = JSON.parse(cleaned);
+    let extractedData;
+    try {
+      const cleaned = rawText.replace(/```json|```/g, '').trim();
+      extractedData = JSON.parse(cleaned);
+    } catch (parseError) {
+      console.error('Eroare parsare JSON:', parseError, 'Raw text:', rawText);
+      return NextResponse.json(
+        { error: 'Nu am putut interpreta răspunsul. Încearcă din nou cu o poză mai clară.' },
+        { status: 500 }
+      );
+    }
 
-    console.log('Date structurate extrase cu succes:', extractedData);
-
-    return NextResponse.json({
-      extractedData: extractedData,
-      client: { id: 'temp-' + Date.now() }
-    });
-
+    console.log('Date extrase și structurate:', extractedData);
+    return NextResponse.json(extractedData);
   } catch (error: any) {
-    console.error('EROARE SERVER EXTRACT-ID:', error);
-    return NextResponse.json({ error: 'Eroare la procesarea buletinului: ' + error.message }, { status: 500 });
+    console.error('EROARE SERVER:', error);
+    return NextResponse.json(
+      { error: 'Eroare server: ' + (error.message || 'unknown') },
+      { status: 500 }
+    );
   }
 }

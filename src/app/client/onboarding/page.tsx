@@ -11,13 +11,46 @@ const supabase = createBrowserClient(
 
 function OnboardingContent() {
   const searchParams = useSearchParams();
-  const psychologistId = searchParams.get('psychologist_id');
+  const token = searchParams.get('token');
 
+  const [psychologistId, setPsychologistId] = useState<string | null>(null);
   const [step, setStep] = useState<'upload' | 'confirm_and_sign' | 'success'>('upload');
   const [loading, setLoading] = useState(false);
   const [clientData, setClientData] = useState<any>(null);
   const [clientId, setClientId] = useState<string | null>(null);
   const [hasSigned, setHasSigned] = useState(false);
+
+  // Căutăm psihologul din baza de date folosind API-ul de verificare
+  useEffect(() => {
+    async function fetchClientToken() {
+      if (!token) return;
+
+      try {
+        const res = await fetch(`/api/clients/verify?token=${token}`);
+        const result = await res.json();
+
+        if (!res.ok || !result.client) {
+          console.error('Token invalid sau inexistent:', result.error);
+          return;
+        }
+
+        const data = result.client;
+        setPsychologistId(data.psychologist_id);
+        setClientId(data.id);
+        setClientData((prev: any) => ({
+          ...prev,
+          id: data.id,
+          first_name: data.first_name || '',
+          last_name: data.last_name || '',
+          email: data.email || '',
+        }));
+      } catch (err) {
+        console.error('Eroare rețea/server la verificare token:', err);
+      }
+    }
+
+    fetchClientToken();
+  }, [token]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -45,8 +78,9 @@ function OnboardingContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!psychologistId) {
-      alert('Atenție: Linkul folosit nu conține ID-ul psihologului. Te rugăm să soliciți un link valid.');
+    if (!psychologistId && !token) {
+      alert('Atenție: Linkul folosit este invalid sau a expirat. Te rugăm să soliciți un link valid de la psiholog.');
+      return;
     }
 
     setLoading(true);
@@ -147,19 +181,26 @@ function OnboardingContent() {
 
     setLoading(true);
     try {
-      const { error } = await supabase.from('documents').insert([
-        {
-          client_id: clientId,
+      const validClientId = clientData?.id || (clientId && !clientId.startsWith('temp-') ? clientId : token);
+
+      const response = await fetch('/api/documents/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clientId: validClientId,
           type: 'consent_pre',
           country: clientData?.country_code || 'RO',
           status: 'signed',
-          signature_data: signatureBase64,
-          signed_at: new Date().toISOString(),
-        },
-      ]);
+          signatureData: signatureBase64,
+        }),
+      });
 
-      if (error) {
-        alert('Eroare la salvarea semnăturii: ' + error.message);
+      const result = await response.json();
+
+      if (!response.ok || result.error) {
+        alert('Eroare la salvarea semnăturii: ' + (result.error || 'Eroare necunoscută'));
       } else {
         setStep('success');
       }
